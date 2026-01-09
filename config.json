@@ -1,0 +1,5 @@
+{
+    "model_name": "EleutherAI/gpt-neo-125M",
+    "quantization": "none",
+    "gpu_monitoring_refresh_rate_seconds": 2
+}
