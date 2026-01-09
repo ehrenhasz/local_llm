@@ -82,25 +82,25 @@ Write-Separator
 
 # 4. DEPENDENCY INSTALLATION
 Write-Host "Step 4: Installing Python dependencies..."
-Write-Host "This may take a significant amount of time, especially for PyTorch."
 
 # Activate virtual environment for this script session
 $activateScript = Join-Path $venvPath "Scripts\Activate.ps1"
 & $activateScript
 
-# Create requirements.txt
-$requirements = @"
---index-url https://download.pytorch.org/whl/cu121
-torch
-transformers
-accelerate
-bitsandbytes
-pynvml
-rich
-"@
-Set-Content -Path "requirements.txt" -Value $requirements
+Write-Host "Installing PyTorch with CUDA support... (This may take a long time)"
+pip install torch --index-url https://download.pytorch.org/whl/cu121
 
-pip install -r requirements.txt
+Write-Host "Installing other dependencies..."
+$otherPackages = @(
+    "transformers",
+    "accelerate",
+    "bitsandbytes",
+    "pynvml",
+    "rich",
+    "Flask",
+    "Flask-Cors"
+)
+pip install $otherPackages
 
 Write-Host "Dependency installation complete."
 Write-Separator
