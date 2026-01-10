@@ -2,7 +2,6 @@ from fastapi import FastAPI, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import uvicorn
-import shlex
 import asyncio
 import json
 import httpx
@@ -11,13 +10,14 @@ from pathlib import Path
 from local_llm_backend.utils.process_manager import ProcessManager
 from local_llm_backend.config import load_config as default_load_config, save_config as default_save_config, BackendConfig, MinerConfig, CONFIG_FILE_PATH
 from local_llm_backend.services.system_monitor import get_system_stats as default_get_system_stats
-from local_llm_backend.services.ollama_client import OllamaClient
+from local_llm_backend.services.llm_clients.base import LLMClient
+from local_llm_backend.services.llm_clients import get_llm_client
 from local_llm_backend.services.recipe_manager import get_recipes as default_get_recipes, read_recipe as default_read_recipe
 
 # --- App Factory for Testability ---
 def create_app(
     process_manager_instance: ProcessManager = None,
-    ollama_client_instance: OllamaClient = None,
+    llm_client_instance: LLMClient = None,
     load_config_fn=default_load_config,
     save_config_fn=default_save_config,
     get_system_stats_fn=default_get_system_stats,
@@ -26,23 +26,15 @@ def create_app(
 ):
     app = FastAPI(title="Local LLM Control Backend", version="1.0.0")
 
-    # Store provided instances or create real ones if not provided
     app.state.process_manager = process_manager_instance if process_manager_instance is not None else ProcessManager()
-    app.state.ollama_client = ollama_client_instance if ollama_client_instance is not None else OllamaClient()
 
     @app.on_event("startup")
     async def startup_event():
-        # Ensure config.json exists or is created with defaults
-        if not CONFIG_FILE_PATH.exists():
-            save_config_fn(BackendConfig()) # Use injected save_config
-        app.state.config = load_config_fn() # Use injected load_config
-        # Now, ensure app.state.ollama_client is configured with the base_url from config.
-        # Crucially, we use the *already provided* ollama_client_instance (which is our mock in tests)
-        # to update its base_url, rather than creating a new real OllamaClient.
-        # If the provided ollama_client_instance is None (production), then it's a real OllamaClient
-        # and we update it.
-        app.state.ollama_client.base_url = app.state.config.llm_api_base
-        app.state.ollama_client.client = httpx.AsyncClient(base_url=app.state.config.llm_api_base) # Update its internal client
+        app.state.config = load_config_fn()
+        if llm_client_instance:
+            app.state.llm_client = llm_client_instance
+        else:
+            app.state.llm_client = get_llm_client(app.state.config.llm)
 
     @app.get("/config", response_model=BackendConfig)
     async def get_backend_config():
@@ -52,8 +44,7 @@ def create_app(
     async def update_backend_config(new_config: BackendConfig):
         save_config_fn(new_config)
         app.state.config = new_config
-        app.state.ollama_client.base_url = app.state.config.llm_api_base
-        app.state.ollama_client.client = httpx.AsyncClient(base_url=app.state.config.llm_api_base)
+        app.state.llm_client = get_llm_client(app.state.config.llm)
         return app.state.config
 
     @app.get("/")
@@ -67,22 +58,22 @@ def create_app(
     @app.post("/llm/start")
     async def start_llm_service():
         try:
-            await app.state.ollama_client.get_models()
-            return {"status": "Ollama service is reachable", "message": "Assumed Ollama server running."}
+            await app.state.llm_client.get_models()
+            return {"status": "LLM service is reachable", "message": f"Provider '{app.state.config.llm.provider}' is active."}
         except Exception as e:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Ollama service not reachable: {e}")
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"LLM service not reachable: {e}")
 
     @app.post("/llm/stop")
     async def stop_llm_service():
-        return {"status": "Ollama service stop not directly managed by this backend.", "message": "Please stop Ollama server externally if it was not started by this service."}
+        return {"status": "LLM service stop not directly managed by this backend.", "message": "Please stop the underlying service (e.g., Ollama server) externally."}
 
     @app.get("/llm/status")
     async def get_llm_status():
         try:
-            await app.state.ollama_client.get_models()
-            return {"status": "RUNNING", "message": "Ollama service is reachable."}
+            await app.state.llm_client.get_models()
+            return {"status": "RUNNING", "message": f"LLM service '{app.state.config.llm.provider}' is reachable."}
         except Exception:
-            return {"status": "STOPPED", "message": "Ollama service is not reachable."}
+            return {"status": "STOPPED", "message": f"LLM service '{app.state.config.llm.provider}' is not reachable."}
 
     class LLMGenerationRequest(BaseModel):
         model: str
@@ -92,48 +83,50 @@ def create_app(
 
     @app.post("/llm/generate")
     async def generate_text_with_llm(request: LLMGenerationRequest):
-        if not app.state.ollama_client:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Ollama client not initialized.")
+        if not app.state.llm_client:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="LLM client not initialized.")
         try:
             if request.stream:
                 async def stream_generator():
-                    async for chunk in app.state.ollama_client.generate(request.model, request.prompt, stream=True, options={"num_predict": request.max_tokens}):
+                    async for chunk in app.state.llm_client.generate(request.model, request.prompt, stream=True, options={"num_predict": request.max_tokens}):
                         yield json.dumps(chunk) + "\n"
                 return StreamingResponse(stream_generator(), media_type="application/json")
             else:
-                response = await app.state.ollama_client.generate(request.model, request.prompt, stream=False, options={"num_predict": request.max_tokens})
-                return response
+                # Aggregate the response from the async generator
+                response_chunks = [chunk async for chunk in app.state.llm_client.generate(request.model, request.prompt, stream=False, options={"num_predict": request.max_tokens})]
+                # Assuming the non-streamed response is the first (and only) chunk
+                return response_chunks[0] if response_chunks else {}
         except httpx.RequestError as e:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Could not connect to Ollama service: {e}")
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Could not connect to LLM service: {e}")
         except Exception as e:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error during LLM generation: {e}")
 
     @app.get("/llm/models")
-    async def list_ollama_models():
-        if not app.state.ollama_client:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Ollama client not initialized.")
+    async def list_llm_models():
+        if not app.state.llm_client:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="LLM client not initialized.")
         try:
-            models = await app.state.ollama_client.get_models()
+            models = await app.state.llm_client.get_models()
             return models
         except httpx.RequestError as e:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Could not connect to Ollama service: {e}")
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Could not connect to LLM service: {e}")
 
-    class OllamaPullRequest(BaseModel):
+    class LLMPullRequest(BaseModel):
         model_name: str
 
     @app.post("/llm/pull")
-    async def pull_ollama_model(request: OllamaPullRequest):
-        if not app.state.ollama_client:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Ollama client not initialized.")
+    async def pull_llm_model(request: LLMPullRequest):
+        if not app.state.llm_client:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="LLM client not initialized.")
         try:
             async def pull_generator():
-                async for chunk in app.state.ollama_client.pull_model(request.model_name):
+                async for chunk in app.state.llm_client.pull_model(request.model_name):
                     yield json.dumps(chunk) + "\n"
             return StreamingResponse(pull_generator(), media_type="application/json")
         except httpx.RequestError as e:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Could not connect to Ollama service: {e}")
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Could not connect to LLM service: {e}")
         except Exception as e:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error pulling Ollama model: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error pulling LLM model: {e}")
 
     @app.get("/recipes")
     async def get_all_recipes():

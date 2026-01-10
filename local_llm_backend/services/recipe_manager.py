@@ -1,10 +1,19 @@
 import os
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
-# Assuming recipes are in a 'recipes' directory relative to the project root
-# This path needs to be correctly set based on the FastAPI app's working directory
-RECIPES_DIR = Path(__file__).parent.parent.parent / "recipes"
+# Correctly determine the base path for data files (like the recipes dir)
+# for both development and PyInstaller bundled mode.
+if getattr(sys, 'frozen', False):
+    # If the application is run as a bundle, the base path is the temp directory
+    # where PyInstaller unpacks the data files.
+    base_path = Path(sys._MEIPASS)
+else:
+    # In a normal environment, the base path is the project root
+    base_path = Path(__file__).parent.parent.parent
+
+RECIPES_DIR = base_path / "recipes"
 
 def get_recipes() -> Dict[str, List[str]]:
     recipes = {}
