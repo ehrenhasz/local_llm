@@ -1,10 +1,9 @@
 import customtkinter as ctk
 import tkinter as tk
-from src.logic import (
+from logic import (
     get_system_stats, read_config, write_config, start_miner, stop_miner, RUNNING_MINERS,
     run_llm_generation, get_recipes, read_recipe
 )
-import os
 
 class MinerManagerWindow(ctk.CTkToplevel):
     def __init__(self, master):
@@ -106,26 +105,24 @@ class LocalLLMApp(ctk.CTk):
     def create_ai_tab(self, tab):
         tab.grid_columnconfigure(0, weight=2)
         tab.grid_columnconfigure(1, weight=1)
-        tab.grid_rowconfigure(1, weight=1)
+        tab.grid_rowconfigure(0, weight=1)
 
         # --- Left Frame for Prompt/Output ---
         left_frame = ctk.CTkFrame(tab)
         left_frame.grid(row=0, column=0, rowspan=2, padx=(10, 5), pady=10, sticky="nsew")
-        left_frame.grid_rowconfigure(3, weight=1) # Ensure output textbox expands
+        left_frame.grid_rowconfigure(1, weight=1) # Allow prompt textbox to expand
+        left_frame.grid_rowconfigure(2, weight=2) # Ensure output textbox expands
         left_frame.grid_columnconfigure(0, weight=1)
-
-        self.api_key_entry = ctk.CTkEntry(left_frame, placeholder_text="Enter your Google AI API Key here")
-        self.api_key_entry.grid(row=0, column=0, columnspan=2, padx=10, pady=(10, 5), sticky="ew")
         
         self.prompt_textbox = ctk.CTkTextbox(left_frame)
-        self.prompt_textbox.grid(row=1, column=0, columnspan=2, padx=10, pady=5, sticky="nsew")
+        self.prompt_textbox.grid(row=0, column=0, columnspan=2, padx=10, pady=10, sticky="nsew")
         self.prompt_textbox.insert("0.0", "Enter your prompt here...")
-        
+
         run_button = ctk.CTkButton(left_frame, text="Run LLM", command=self.run_llm)
-        run_button.grid(row=2, column=0, padx=10, pady=10, sticky="w")
+        run_button.grid(row=1, column=0, padx=10, pady=10, sticky="w")
 
         self.output_textbox = ctk.CTkTextbox(left_frame, state="disabled")
-        self.output_textbox.grid(row=3, column=0, columnspan=2, padx=10, pady=10, sticky="nsew")
+        self.output_textbox.grid(row=2, column=0, columnspan=2, padx=10, pady=10, sticky="nsew")
 
         # --- Right Frame for Recipes ---
         recipe_frame = ctk.CTkFrame(tab)
@@ -137,24 +134,16 @@ class LocalLLMApp(ctk.CTk):
         self.recipe_menu.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
 
     def run_llm(self):
-        api_key = self.api_key_entry.get()
-        if not api_key:
-            self.output_textbox.configure(state="normal")
-            self.output_textbox.delete("1.0", tk.END)
-            self.output_textbox.insert("1.0", "Error: Please enter a Google AI API Key.")
-            self.output_textbox.configure(state="disabled")
-            return
-
         prompt = self.prompt_textbox.get("1.0", tk.END)
         self.output_textbox.configure(state="normal")
         self.output_textbox.delete("1.0", tk.END)
         self.output_textbox.insert("1.0", "Generating... Please wait.")
         self.output_textbox.configure(state="disabled")
         
-        self.after(100, lambda: self.execute_llm_call(api_key, prompt))
+        self.after(100, lambda: self.execute_llm_call(prompt))
 
-    def execute_llm_call(self, api_key, prompt):
-        response = run_llm_generation(api_key, prompt)
+    def execute_llm_call(self, prompt):
+        response = run_llm_generation(prompt)
         self.output_textbox.configure(state="normal")
         self.output_textbox.delete("1.0", tk.END)
         self.output_textbox.insert("1.0", response)

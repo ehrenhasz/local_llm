@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+pydantic
+psutil
+httpx
+pytest
+# pytest-asyncio # Removed as TestClient is synchronous

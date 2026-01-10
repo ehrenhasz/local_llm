@@ -26,22 +26,27 @@ RECIPES_DIR = "./recipes"
 # --- State ---
 RUNNING_MINERS = {} # {name: {'process': Popen_object, 'log_file': path, 'config': miner_config}}
 
-import google.generativeai as genai
+import vertexai
+from vertexai.generative_models import GenerativeModel
 
 # --- Logging ---
 def log_message(message, level=logging.INFO):
     print(f"[{level}] {message}")
 
 # --- AI Generation ---
-def run_llm_generation(api_key, prompt):
+def run_llm_generation(prompt):
     try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-pro')
+        # NOTE: The user's environment must be authenticated.
+        # e.g., run `gcloud auth application-default login`
+        vertexai.init(project="ascii-kernel", location="us-central1") # User will need to configure this
+
+        model = GenerativeModel("gemini-1.0-pro-001")
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        log_message(f"An error occurred during LLM generation: {e}", level=logging.ERROR)
-        return f"Error: {e}"
+        log_message(f"An error occurred during Vertex AI generation: {e}", level=logging.ERROR)
+        return f"""Error: {e}
+\nPlease ensure your environment is authenticated with Google Cloud (`gcloud auth application-default login`) and the project ID in src/logic.py is correct."""
 
 # --- Recipe Logic ---
 def get_recipes():
@@ -121,8 +126,28 @@ def load_running_miners():
     save_running_miners()
 
 def read_config():
-    if not os.path.exists(CONFIG_FILE): return {"miners": []}
-    with open(CONFIG_FILE, 'r') as f: return json.load(f)
+
+    if not os.path.exists(CONFIG_FILE) or os.path.getsize(CONFIG_FILE) == 0:
+
+        default_config = {"miners": []}
+
+        write_config(default_config)
+
+        return default_config
+
+    with open(CONFIG_FILE, 'r') as f:
+
+        try:
+
+            return json.load(f)
+
+        except json.JSONDecodeError:
+
+            default_config = {"miners": []}
+
+            write_config(default_config)
+
+            return default_config
 
 def write_config(config):
     with open(CONFIG_FILE, 'w') as f: json.dump(config, f, indent=4)
