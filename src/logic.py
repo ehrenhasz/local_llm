@@ -26,14 +26,22 @@ RECIPES_DIR = "./recipes"
 # --- State ---
 RUNNING_MINERS = {} # {name: {'process': Popen_object, 'log_file': path, 'config': miner_config}}
 
+import google.generativeai as genai
+
 # --- Logging ---
 def log_message(message, level=logging.INFO):
     print(f"[{level}] {message}")
 
-# --- AI Simulation ---
-def run_llm_simulation(prompt):
-    log_message(f"Running LLM simulation with prompt: {prompt[:50]}...")
-    return f"This is a simulated response to your prompt: '{prompt}'"
+# --- AI Generation ---
+def run_llm_generation(api_key, prompt):
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-pro')
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        log_message(f"An error occurred during LLM generation: {e}", level=logging.ERROR)
+        return f"Error: {e}"
 
 # --- Recipe Logic ---
 def get_recipes():
