@@ -2,3 +2,4 @@ click
 psutil
 nvidia-ml-py
 pyinstaller
+customtkinter
