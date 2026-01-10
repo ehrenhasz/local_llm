@@ -1,6 +1,1 @@
-torch
-transformers
-accelerate
-bitsandbytes
-pynvml
-rich
+pyinstaller
