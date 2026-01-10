@@ -1,28 +1,22 @@
 # Main startup script
 
-function Show-Menu {
-    Clear-Host
-    Write-Host "=================================="
-    Write-Host "   local_llm Controller"
-    Write-Host "=================================="
-    Write-Host "1. AI Mode"
-    Write-Host "2. Crypto Mode"
-    Write-Host "Q. Quit"
+# --- Logging Setup ---
+$LogFile = "./local_llm.log"
+function Log-Message {
+    param(
+        [string]$Message,
+        [string]$Level = "INFO"
+    )
+    $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    "[$Timestamp] [$Level] - $Message" | Out-File -FilePath $LogFile -Append
 }
 
-while ($true) {
-    Show-Menu
-    $selection = Read-Host "Please make a selection"
+Log-Message "Application started."
 
-    switch ($selection) {
-        "1" { 
-            ./scripts/start_llm.ps1 
-            Read-Host "Press Enter to continue..."
-        }
-        "2" { 
-            ./scripts/start_miner.ps1 
-            Read-Host "Press Enter to continue..."
-        }
-        "q" { return }
-    }
-}
+# Run cleanup script
+./scripts/cleanup.ps1
+
+# Execute the Python CLI application
+Log-Message "Executing Python CLI application: main.py"
+python main.py
+Log-Message "Python CLI application exited."

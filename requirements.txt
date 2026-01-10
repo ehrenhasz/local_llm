@@ -1,1 +1,4 @@
+click
+psutil
+pynvml
 pyinstaller

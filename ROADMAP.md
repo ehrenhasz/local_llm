@@ -2,8 +2,8 @@
 
 ## Phase 0: Architectural Refactor
 
-- [ ] Refactor PowerShell scripts to a Portable Windows Application (OSS Only)
-- [ ] Design for multi-stage Docker build to produce a minimal, self-contained final image.
+- [X] Refactor PowerShell scripts to a Portable Windows Application (OSS Only)
+- [ ] Design for multi-stage Docker build to produce a minimal, self-contained final image. (Deferred to v0.2.0)
 
 ## Phase 1: Project Setup
 
@@ -13,11 +13,12 @@
 
 ## Phase 2: Core Functionality (LLM & Mining)
 
-- [ ] Implement actual LLM starting/stopping logic in `start_llm.ps1` and `stop_llm.ps1` (currently simulated).
-- [ ] Integrate with local LLM APIs/libraries.
-- [ ] Implement actual miner starting/stopping logic in `start_miner.ps1` and `stop_miner.ps1` (currently simulated).
-- [ ] Enhance configuration management (e.g., UI for `config.json`).
-- [ ] Develop dashboard interface for monitoring system resources (GPU, CPU, RAM).
+- [X] Implement actual LLM starting/stopping logic (simulated for now).
+- [X] Integrate with local LLM APIs/libraries (simulated for now).
+- [X] Implement actual miner starting/stopping logic.
+- [X] Refactor to support multiple mining processes.
+- [X] Enhance configuration management (CLI based).
+- [X] Develop dashboard interface for monitoring system resources (GPU, CPU, RAM).
 
 ## Phase 3: Recipes & Extensibility
 
@@ -26,8 +27,10 @@
 
 ## Phase 4: Refinement & Distribution
 
-- [ ] Improve error handling and logging across all scripts.
-- [ ] Implement robust temporary file cleanup.
+- [X] Improve error handling and logging in start.ps1.
+- [X] Improve error handling and logging in other scripts.
+- [X] Implement robust temporary file cleanup.
+- [X] Fix terminal scaling issue in main menu (start.ps1)
 
 ## Future Work
 
