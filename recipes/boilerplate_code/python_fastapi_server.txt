@@ -1,0 +1,4 @@
+Recipe: Python FastAPI Server
+Description: Generates a basic boilerplate for a Python FastAPI server.
+Prompt:
+Generate a simple Python FastAPI server with a single endpoint that returns "Hello, World!". Include the necessary imports and uvicorn server startup code.

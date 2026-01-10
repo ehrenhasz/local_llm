@@ -1,0 +1,4 @@
+Recipe: Summarize Technical Article
+Description: Summarizes a technical article from a given URL.
+Prompt:
+Summarize the key points of the following technical article:

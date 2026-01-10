@@ -1,4 +1,4 @@
 click
 psutil
-pynvml
+nvidia-ml-py
 pyinstaller

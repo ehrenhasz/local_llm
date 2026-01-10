@@ -1,0 +1,4 @@
+Recipe: Optimize Python Function
+Description: Refactors a Python function for better performance or readability.
+Prompt:
+Refactor the following Python function to be more performant and idiomatic:

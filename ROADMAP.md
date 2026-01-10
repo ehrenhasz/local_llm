@@ -22,8 +22,8 @@
 
 ## Phase 3: Recipes & Extensibility
 
-- [ ] Develop initial LLM recipes in the `recipes` directory (boilerplate code, documentation, etc.).
-- [ ] Implement a mechanism to easily add and manage new recipes.
+- [X] Develop initial LLM recipes in the `recipes` directory (boilerplate code, documentation, etc.).
+- [X] Implement a mechanism to easily add and manage new recipes.
 
 ## Phase 4: Refinement & Distribution
 

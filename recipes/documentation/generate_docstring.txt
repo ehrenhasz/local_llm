@@ -1,0 +1,4 @@
+Recipe: Generate Python Docstring
+Description: Creates a Python docstring for a given function.
+Prompt:
+Generate a Google-style docstring for the following Python function:

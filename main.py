@@ -4,10 +4,22 @@ import logging
 from datetime import datetime
 import shutil
 import json
+import platform
 import subprocess # Import subprocess for launching miners
 import time # For time.sleep in simulations if needed
 import psutil
-from pynvml import *
+from pynvml import (
+    nvmlInit,
+    nvmlDeviceGetCount,
+    nvmlDeviceGetHandleByIndex,
+    nvmlDeviceGetName,
+    nvmlDeviceGetUtilizationRates,
+    nvmlDeviceGetMemoryInfo,
+    nvmlDeviceGetTemperature,
+    NVML_TEMPERATURE_GPU,
+    NVMLError,
+    nvmlShutdown,
+)
 
 import src.ai_mode as ai_mode # Import ai_mode
 
@@ -23,7 +35,40 @@ def log_message(message, level=logging.INFO):
 MINER_TEMP_FILE_PREFIX = "./temp_miner_" # Prefix for unique temp files per miner
 MINER_LOG_FILE_PREFIX = "./miner_" # Prefix for unique miner log files
 CONFIG_FILE = "./config.json"
+RUNNING_MINERS_PID_FILE = "./running_miners.json"
+
 RUNNING_MINERS = {} # Dictionary to store running miner processes {name: {'process': Popen_object, 'log_file': path, 'config': miner_config}}
+
+def save_running_miners():
+    """Saves the PIDs of running miners to a file."""
+    pids = {name: info['process'].pid for name, info in RUNNING_MINERS.items()}
+    with open(RUNNING_MINERS_PID_FILE, 'w') as f:
+        json.dump(pids, f, indent=2)
+
+def load_running_miners():
+    """Loads running miner processes from the PID file."""
+    if not os.path.exists(RUNNING_MINERS_PID_FILE):
+        return
+
+    with open(RUNNING_MINERS_PID_FILE, 'r') as f:
+        try:
+            pids = json.load(f)
+        except json.JSONDecodeError:
+            return # Ignore if the file is corrupted
+
+    config = read_config()
+    for name, pid in pids.items():
+        if psutil.pid_exists(pid):
+            miner_config = next((m for m in config['miners'] if m['name'] == name), None)
+            if miner_config:
+                process = psutil.Process(pid)
+                # We can't get the Popen object back, but we can manage the process with psutil
+                RUNNING_MINERS[name] = {'process': process, 'log_file': f"{MINER_LOG_FILE_PREFIX}{name}.log", 'config': miner_config}
+                log_message(f"Resumed monitoring of miner '{name}' (PID: {pid}).")
+        else:
+            log_message(f"Miner '{name}' (PID: {pid}) was not running.", level=logging.WARN)
+
+    save_running_miners() # Clean up PID file from non-running processes
 
 def read_config():
     if not os.path.exists(CONFIG_FILE):
@@ -86,6 +131,7 @@ def _start_miner(miner_config):
         RUNNING_MINERS[name] = {'process': process, 'log_file': miner_log_file, 'config': miner_config}
         log_message(f"Miner '{name}' started (PID: {process.pid}). Output redirected to {miner_log_file}")
         click.echo(f"Miner '{name}' started (PID: {process.pid}). Output redirected to {miner_log_file}")
+        save_running_miners()
 
     except FileNotFoundError as e:
         log_message(f"Error starting miner '{name}': {e}", level=logging.ERROR)
@@ -100,22 +146,34 @@ def _stop_miner(name):
         if name in RUNNING_MINERS:
             miner_info = RUNNING_MINERS[name]
             process = miner_info['process']
-            
+
             log_message(f"Stopping crypto miner '{name}' (PID: {process.pid})...")
             click.echo(f"Stopping crypto miner '{name}' (PID: {process.pid})...")
 
-            process.terminate()
-            process.wait(timeout=10) # Give it 10 seconds to terminate gracefully
+            if isinstance(process, subprocess.Popen):
+                process.terminate()
+                process.wait(timeout=10) # Give it 10 seconds to terminate gracefully
 
-            if process.poll() is None: # If still running, force kill
-                process.kill()
-                process.wait()
-                log_message(f"Miner '{name}' (PID: {process.pid}) force-killed.", level=logging.WARN)
-                click.echo(f"Miner '{name}' (PID: {process.pid}) force-killed.")
-            
+                if process.poll() is None: # If still running, force kill
+                    process.kill()
+                    process.wait()
+                    log_message(f"Miner '{name}' (PID: {process.pid}) force-killed.", level=logging.WARN)
+                    click.echo(f"Miner '{name}' (PID: {process.pid}) force-killed.")
+            elif isinstance(process, psutil.Process):
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except psutil.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+                    log_message(f"Miner '{name}' (PID: {process.pid}) force-killed.", level=logging.WARN)
+                    click.echo(f"Miner '{name}' (PID: {process.pid}) force-killed.")
+
+
             del RUNNING_MINERS[name]
             log_message(f"Miner '{name}' (PID: {process.pid}) stopped.")
             click.echo(f"Miner '{name}' (PID: {process.pid}) stopped.")
+            save_running_miners()
         else:
             log_message(f"Miner '{name}' not found in running processes.", level=logging.WARN)
             click.echo(f"Miner '{name}' not found in running processes.")
@@ -127,6 +185,7 @@ def _stop_miner(name):
 @click.group()
 def cli():
     """local_llm Controller"""
+    load_running_miners()
     pass
 
 @cli.command()
@@ -158,10 +217,12 @@ def crypto():
             click.echo(f"Miner '{miner_config['name']}' is already running.")
             continue
         _start_miner(miner_config)
-    
-    click.echo("Press Enter to stop all miners...")
-    input() # Wait for user input to stop
-    
+
+@cli.command(name="stop-crypto")
+def stop_crypto():
+    """Stops all running miners."""
+    log_message("Stopping all miners...")
+    click.echo("Stopping all miners...")
     for miner_name in list(RUNNING_MINERS.keys()): # Iterate over a copy as dict changes size during iteration
         _stop_miner(miner_name)
 
@@ -172,8 +233,19 @@ def setup():
     log_message("Running setup...")
     click.echo("Running setup...")
 
-    MINER_URL = "https://github.com/trexminer/T-Rex/releases/download/0.26.8/t-rex-0.26.8-win.zip"
-    MINER_ZIP = "t-rex.zip"
+    system = platform.system()
+    if system == "Windows":
+        MINER_URL = "https://github.com/trexminer/T-Rex/releases/download/0.26.8/t-rex-0.26.8-win.zip"
+        MINER_ZIP = "t-rex.zip"
+        MINER_EXE = "t-rex.exe"
+    elif system == "Linux":
+        MINER_URL = "https://github.com/trexminer/T-Rex/releases/download/0.26.8/t-rex-0.26.8-linux.tar.gz"
+        MINER_ZIP = "t-rex.tar.gz"
+        MINER_EXE = "t-rex"
+    else:
+        click.echo(f"Unsupported OS: {system}")
+        return
+
     MINER_DIR = "./bin/t-rex"
 
     try:
@@ -182,12 +254,12 @@ def setup():
             os.makedirs(MINER_DIR)
             click.echo(f"Creating miner directory: {MINER_DIR}")
 
-        log_message("Downloading T-Rex miner...")
-        click.echo("Downloading T-Rex miner...")
+        log_message(f"Downloading T-Rex miner for {system}...")
+        click.echo(f"Downloading T-Rex miner for {system}...")
         # Simulate download and extraction
-        # In a real scenario, you would use requests to download and zipfile to extract
-        with open(os.path.join(MINER_DIR, "t-rex.exe"), "w") as f:
-            f.write("DUMMY_T_REX_EXE_CONTENT")
+        # In a real scenario, you would use requests to download and zipfile/tarfile to extract
+        with open(os.path.join(MINER_DIR, MINER_EXE), "w") as f:
+            f.write(f"DUMMY_T_REX_EXE_CONTENT_FOR_{system}")
 
         log_message("T-Rex miner setup complete.")
         click.echo("T-Rex miner setup complete.")
@@ -229,6 +301,7 @@ def cleanup():
 
     temp_files = [
         ai_mode.LLM_PID_FILE, # Use LLM_PID_FILE from ai_mode
+        RUNNING_MINERS_PID_FILE,
     ]
     # Add all miner temp files and log files to cleanup
     for file_name in os.listdir('.'):
@@ -259,9 +332,9 @@ def config_miner():
     """Manages miner configurations."""
     pass
 
-@config_miner.command()
+@config_miner.command(name="add")
 @click.option('--name', required=True, help="Name of the miner configuration.")
-@click.option('--miner-path', default="./bin/t-rex/t-rex.exe", help="Path to the miner executable.")
+@click.option('--miner-path', help="Path to the miner executable.")
 @click.option('--wallet', required=True, help="Wallet address for mining.")
 @click.option('--pool', required=True, help="Mining pool address and port (e.g., 'stratum+tcp://pool.zano.org:3333').")
 @click.option('--coin', required=True, help="Coin to mine (e.g., 'zano').")
@@ -269,6 +342,16 @@ def config_miner():
 @click.option('--device', type=int, help="GPU device ID (e.g., 0, 1).")
 def add(name, miner_path, wallet, pool, coin, worker, device):
     """Adds a new miner configuration."""
+    if miner_path is None:
+        system = platform.system()
+        if system == "Windows":
+            miner_path = "./bin/t-rex/t-rex.exe"
+        elif system == "Linux":
+            miner_path = "./bin/t-rex/t-rex"
+        else:
+            click.echo(f"Unsupported OS: {system}. Please provide the miner path manually using --miner-path.")
+            return
+
     config = read_config()
     if any(m['name'] == name for m in config['miners']):
         log_message(f"Miner configuration with name '{name}' already exists. Use 'update' to modify.", level=logging.WARN)
@@ -414,6 +497,103 @@ def dashboard():
             nvmlShutdown()
         except:
             pass
+
+@click.group()
+def recipe():
+    """Manages recipes."""
+    pass
+
+@recipe.command(name="list")
+def list_recipes():
+    """Lists all available recipes."""
+    recipes_dir = "./recipes"
+    if not os.path.exists(recipes_dir):
+        click.echo("Recipes directory not found.")
+        return
+
+    click.echo("\n--- Available Recipes ---")
+    for category in os.listdir(recipes_dir):
+        category_path = os.path.join(recipes_dir, category)
+        if os.path.isdir(category_path):
+            click.echo(f"\nCategory: {category}")
+            for recipe_file in os.listdir(category_path):
+                click.echo(f"  - {recipe_file}")
+    click.echo("\n-------------------------")
+
+@recipe.command(name="add")
+@click.option('--category', required=True, help="Category of the recipe.")
+@click.option('--name', required=True, help="Name of the recipe file (e.g., my_recipe.txt).")
+@click.option('--description', required=True, help="Description of the recipe.")
+@click.option('--prompt', required=True, help="The prompt for the recipe.")
+def add_recipe(category, name, description, prompt):
+    """Adds a new recipe."""
+    recipes_dir = "./recipes"
+    category_path = os.path.join(recipes_dir, category)
+    if not os.path.exists(category_path):
+        os.makedirs(category_path)
+
+    recipe_path = os.path.join(category_path, name)
+    if os.path.exists(recipe_path):
+        click.echo(f"Recipe '{name}' already exists in category '{category}'.")
+        return
+
+    content = f"Recipe: {name}\nDescription: {description}\nPrompt:\n{prompt}"
+    with open(recipe_path, 'w') as f:
+        f.write(content)
+    click.echo(f"Added recipe '{name}' to category '{category}'.")
+
+
+@recipe.command(name="remove")
+@click.option('--path', required=True, help="Path to the recipe file to remove (e.g., 'boilerplate_code/my_recipe.txt').")
+def remove_recipe(path):
+    """Removes a recipe."""
+    recipe_path = os.path.join("./recipes", path)
+    if not os.path.exists(recipe_path):
+        click.echo(f"Recipe not found at '{recipe_path}'.")
+        return
+
+    os.remove(recipe_path)
+    click.echo(f"Removed recipe at '{recipe_path}'.")
+
+@recipe.command(name="update")
+@click.option('--path', required=True, help="Path to the recipe file to update (e.g., 'boilerplate_code/my_recipe.txt').")
+@click.option('--description', help="New description for the recipe.")
+@click.option('--prompt', help="New prompt for the recipe.")
+def update_recipe(path, description, prompt):
+    """Updates a recipe."""
+    recipe_path = os.path.join("./recipes", path)
+    if not os.path.exists(recipe_path):
+        click.echo(f"Recipe not found at '{recipe_path}'.")
+        return
+
+    #This is a simple implementation. A more robust one would parse the file and replace the fields.
+    #For now, we'll just overwrite the file if new content is provided.
+    if description or prompt:
+        with open(recipe_path, 'r') as f:
+            lines = f.readlines()
+
+        #This is a very basic parsing. It assumes the format is consistent.
+        name = lines[0].replace("Recipe: ", "").strip()
+        new_content = f"Recipe: {name}\n"
+        if description:
+            new_content += f"Description: {description}\n"
+        else:
+            new_content += lines[1]
+
+        if prompt:
+            new_content += f"Prompt:\n{prompt}\n"
+        else:
+            new_content += "".join(lines[2:])
+
+
+        with open(recipe_path, 'w') as f:
+            f.write(new_content)
+        click.echo(f"Updated recipe at '{recipe_path}'.")
+    else:
+        click.echo("Nothing to update. Please provide a new description or prompt.")
+
+cli.add_command(config_miner)
+cli.add_command(recipe)
 
 if __name__ == '__main__':
     cli()

@@ -1,0 +1,4 @@
+Recipe: Python to JavaScript Translation
+Description: Translates a Python script to JavaScript.
+Prompt:
+Translate the following Python code to JavaScript:
